@@ -10,6 +10,8 @@ from sklearn.decomposition import PCA
 import tkinter as tk
 from tkinter import ttk
 from collections import defaultdict
+import hdbscan
+from sklearn.datasets import make_blobs
 
 
 
@@ -32,7 +34,10 @@ def find_player_stats(player_stats):
     
     # Parameters for stats to compare
     
-    stats = [18, 19, 23, 24]
+    # Things to add:
+    # 1. Display good/bad outlier players for the data set
+    # 2. Display percentiles of stats for each cluster
+    stats = [11,12,13,14,15]
 
     stat_1 = stats[0]     ##
     stat_2 = stats[1]     ##
@@ -40,6 +45,7 @@ def find_player_stats(player_stats):
     n_clusters = 1
     eps = 0.7
     min_samples = 5
+    min_cluster_size = 2    # For HDBSCAN
 
     stat_names = []
 
@@ -65,7 +71,7 @@ def find_player_stats(player_stats):
         player_team = player_stats.iloc[i, 6]
         player_conference = player_stats.iloc[i, 7]
 
-        if player_conference == "B12":
+        if player_conference == "A10":
             # name_counter = 0
             for j, stat in enumerate(stats):
                 all_stats[j].append(player_stats.iloc[i, stat])
@@ -83,7 +89,7 @@ def find_player_stats(player_stats):
     
 
 
-    return X_list, y_list, all_stats, name_list, stat_1_name, stat_2_name, stat_names, n_clusters, eps, min_samples
+    return X_list, y_list, all_stats, name_list, stat_1_name, stat_2_name, stat_names, n_clusters, eps, min_samples, min_cluster_size
 
 
 
@@ -222,6 +228,7 @@ def plot_basic_stats(X_list, y_list, name_list, X_name, y_name):
     fig.canvas.mpl_connect("motion_notify_event", hover)
     plt.show()
 
+#****************************************************************************************************************************************************************************************
 
 
 def find_kmeans(X_list, y_list, name_list, X_name, y_name, n_clusters=5):
@@ -272,6 +279,7 @@ def find_kmeans(X_list, y_list, name_list, X_name, y_name, n_clusters=5):
     fig.canvas.mpl_connect("motion_notify_event", hover)
     plt.show()
 
+#****************************************************************************************************************************************************************************************
 
 
 def find_dbscan(list_of_stats, name_list, list_of_stat_names, EPS=0.5, MIN_SAMPLES=5):
@@ -293,7 +301,7 @@ def find_dbscan(list_of_stats, name_list, list_of_stat_names, EPS=0.5, MIN_SAMPL
 
     X_pca = X
 
-    # Apply DBSCAN ###########################################################################################################################################################
+    # Apply DBSCAN ###############################################################################################
     clusterer = DBSCAN(eps=EPS, min_samples=MIN_SAMPLES)
     cluster_labels = clusterer.fit_predict(X_pca)
 
@@ -353,17 +361,146 @@ def find_dbscan(list_of_stats, name_list, list_of_stat_names, EPS=0.5, MIN_SAMPL
         print(f"    Number of Players: {len(cluster_groups_names[label])}")
         for stat_name, avg_stat in zip(list_of_stat_names, avg_stats):
             print(f"    {stat_name}: {avg_stat:.2f}")
-        print(f"Sum of all stats: {sum(avg_stats):.2f}")
+        print(f"        Sum of all stats: {sum(avg_stats):.2f}")
         print()
         temp_idx += 1
-        if temp_idx >= 5:
-            break
+        '''if temp_idx >= 5:
+            break'''
 
 
     # Plot the results
     fig, ax = plt.subplots(figsize=(10, 6))
     scatter = ax.scatter(original_X[:, 0], original_X[:, 1], c=cluster_labels, s=30, cmap='jet')
     ax.set_title("DBSCAN Clustering")
+    ax.set_xlabel(f'{list_of_stat_names[0]}')
+    ax.set_ylabel(f'{list_of_stat_names[1]}')
+
+    # Create hover functionality
+    annot = ax.annotate('', xy=(0,0), xytext=(20,20), textcoords="offset points",
+                        bbox=dict(boxstyle="round", fc="lightblue", alpha=1.0),
+                        arrowprops=dict(arrowstyle="->"))
+    annot.set_visible(False)
+
+
+    def update_annot(ind):
+        pos = scatter.get_offsets()[ind["ind"][0]]
+        annot.xy = pos
+        text = f"{name_list[ind['ind'][0]]}"
+        annot.set_text(text)
+        annot.get_bbox_patch().set_facecolor('lightblue')
+        annot.get_bbox_patch().set_alpha(1.0)  # Solid background (no transparency)
+
+    def hover(event):
+        vis = annot.get_visible()
+        if event.inaxes == ax:
+            cont, ind = scatter.contains(event)
+            if cont:
+                update_annot(ind)
+                annot.set_visible(True)
+                fig.canvas.draw()
+            else:
+                if vis:
+                    annot.set_visible(False)
+                    fig.canvas.draw()
+
+    fig.canvas.mpl_connect("motion_notify_event", hover)
+    plt.show()
+
+
+#****************************************************************************************************************************************************************************************
+
+# This is a copy and paste of find_dbscan, with some modifications to change it to hdbscan
+def find_hdbscan(list_of_stats, name_list, list_of_stat_names, MIN_CLUSTER_SIZE=5, MIN_SAMPLES=5):
+    # Idk if I will need min_samples for hdbscan, but I am including it for now
+
+    print(f"list_of_stats[0] = {list_of_stats[0]}")
+
+    # IF WE HAVE TIME, LOOK AT FINDING OUT WHY NAMES ARE NOT POPPING UP WHEN THE MOUSE HOVERS OVER DOTS
+
+    # Standardize the features
+    N_COMPONENTS = len(list_of_stats)
+    print(f"N_COMPONENTS: {N_COMPONENTS}")
+    original_X = np.array(list_of_stats).T
+    X = StandardScaler().fit_transform(np.array(list_of_stats).T)
+
+    # Apply PCA for dimensionality reduction
+    # PCA = Principle Component Analysis
+    pca = PCA(n_components=N_COMPONENTS)
+    X_pca = pca.fit_transform(X)
+
+    X_pca = X
+
+    # Apply HDBSCAN ################################################################################
+    clusterer = hdbscan.HDBSCAN(min_cluster_size=MIN_CLUSTER_SIZE)
+    cluster_labels = clusterer.fit_predict(X_pca)
+
+    # Group player names by their cluster labels
+    cluster_groups_names = defaultdict(list)
+    # Holds all stats for players in ALL clusters
+    all_cluster_stats = defaultdict(list)
+    average_cluster_stats = defaultdict(list)
+
+    print(f"original_X shape: {original_X.shape}, type: {type(original_X)}")
+    # print(f"original_X = {original_X}")
+    # return
+
+    for idx, label in enumerate(cluster_labels):
+
+        player_stat_list = original_X[idx]
+        player_name = name_list[idx]
+        cluster_groups_names[label].append(player_name)
+        all_cluster_stats[label].append(player_stat_list)
+        # Find the average stats for each cluster
+
+        '''for idx, item in enumerate(player_stat_list):
+            stat_name = list_of_stat_names[idx]
+            all_cluster_stats[stat_name].append(item)'''
+
+        # all_cluster_stats[label].append(player_stat_list)
+    # Loops through each cluster label
+    for cluster_label, cluster_stat_list in all_cluster_stats.items():
+        # Holds all stats for players in a SINGLE cluster, labels are stat names
+        accumulated_single_cluster_stats = defaultdict(list)
+        
+        # Loops through each player's stats in that cluster
+        for player_idx, player_stat_list in enumerate(cluster_stat_list):
+
+            # Loops through each stat of that player
+            for stat_idx, stat in enumerate(player_stat_list):
+                stat_name = list_of_stat_names[stat_idx]
+                accumulated_single_cluster_stats[stat_name].append(stat)
+                # print(f"Cluster {label}, Player {cluster_groups_names[label][idx]}, Stats: {stat}, type of {type(stat)}, type(stat[0]): {type(stat[0])}, stat_name: {stat_name}")
+
+
+        # Now find the average of each stat for that cluster
+        average_cluster_stats[cluster_label] = []
+        for stat_name, stats in accumulated_single_cluster_stats.items():
+            average_stat = np.mean(stats)
+            average_cluster_stats[cluster_label].append(average_stat)
+
+            # print(f"Cluster {label}, Player {cluster_groups_names[label][idx]}, Stats: {stat}, type of {type(stat)}, type(stat[0]): {type(stat[0])}, stat_name: {stat_name}")
+
+    print(f"Cluster Groups and their Players:\n")
+    for label, players in cluster_groups_names.items():
+        print(f"  Cluster {label}: {players}\n")
+    print(f"Average Stats per Cluster:\n\n")
+    temp_idx = 0
+    for label, avg_stats in average_cluster_stats.items():
+        print(f"  Cluster {label}:")
+        print(f"    Number of Players: {len(cluster_groups_names[label])}")
+        for stat_name, avg_stat in zip(list_of_stat_names, avg_stats):
+            print(f"    {stat_name}: {avg_stat:.2f}")
+        print(f"        Sum of all stats: {sum(avg_stats):.2f}")
+        print()
+        temp_idx += 1
+        '''if temp_idx >= 5:
+            break'''
+
+
+    # Plot the results
+    fig, ax = plt.subplots(figsize=(10, 6))
+    scatter = ax.scatter(original_X[:, 0], original_X[:, 1], c=cluster_labels, s=30, cmap='jet')
+    ax.set_title("HDBSCAN Clustering")
     ax.set_xlabel(f'{list_of_stat_names[0]}')
     ax.set_ylabel(f'{list_of_stat_names[1]}')
 
@@ -412,7 +549,7 @@ def main():
     # X_list and y_list are the first two stats in all_stats
     # X_name and y_name are the names of those stats
 
-    X_list, y_list, all_stats, name_list, X_name, y_name, stat_names, n_clusters, eps, min_samples = find_player_stats(player_stats)
+    X_list, y_list, all_stats, name_list, X_name, y_name, stat_names, n_clusters, eps, min_samples, min_cluster_size = find_player_stats(player_stats)
 
     print(f"player_stats info: \n {player_stats[0:5]}\n")
 
@@ -424,7 +561,9 @@ def main():
 
     # find_kmeans(X_list, y_list, name_list, X_name, y_name, n_clusters)
 
-    find_dbscan(all_stats, name_list, stat_names, eps, min_samples)
+    #find_dbscan(all_stats, name_list, stat_names, eps, min_samples)
+
+    find_hdbscan(all_stats, name_list, stat_names, min_cluster_size, min_samples)
 
     pass
 
